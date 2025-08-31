@@ -1,0 +1,1 @@
+job_arrival_rate_exponential_lambda: float = 0.65  # exponential distribution
