@@ -10,9 +10,11 @@ agent_wake_up_frequency = 1  # unit of time days
 
 
 class JobReleasePolicy(ABC):
-    def __init__(self, env: simpy.Environment) -> None:
+    def __init__(
+        self, env: simpy.Environment, job_to_be_released_queue: simpy.Store
+    ) -> None:
         self.env = env
-        self.job_released_event: simpy.Event = env.event()
+        self.job_to_be_released_queue = job_to_be_released_queue
 
     @abstractmethod
     def run(self) -> None:
@@ -20,8 +22,10 @@ class JobReleasePolicy(ABC):
 
 
 class PushJobReleasePolicy(JobReleasePolicy):
-    def __init__(self, env: simpy.Environment) -> None:
-        super().__init__(env)
+    def __init__(
+        self, env: simpy.Environment, job_to_be_released_queue: simpy.Store
+    ) -> None:
+        super().__init__(env, job_to_be_released_queue)
         job_iterable: Iterable[Job] = create_job_generator()
         self.job_iterator: Iterator[Job] = iter(job_iterable)
 
@@ -30,8 +34,7 @@ class PushJobReleasePolicy(JobReleasePolicy):
             try:
                 job = next(self.job_iterator)
                 yield self.env.timeout(job.inter_arrival_time)
-                self.job_released_event.succeed(job)
-                self.job_released_event = self.env.event()
+                yield self.job_to_be_released_queue.put(job)
             except Exception as e:
                 print(f"Error: {e}")
 
@@ -40,8 +43,10 @@ class PushJobReleasePolicy(JobReleasePolicy):
 
 
 class PspJobReleasePolicy(JobReleasePolicy):
-    def __init__(self, env: simpy.Environment) -> None:
-        super().__init__(env)
+    def __init__(
+        self, env: simpy.Environment, job_to_be_released_queue: simpy.Store
+    ) -> None:
+        super().__init__(env, job_to_be_released_queue)
         self.job_queue = simpy.Store(env)
         job_iterable: Iterable[Job] = create_job_generator()
         self.job_iterator: Iterator[Job] = iter(job_iterable)
@@ -64,10 +69,10 @@ class PspJobReleasePolicy(JobReleasePolicy):
                 yield self.env.timeout(agent_wake_up_frequency)
                 push_job = self.__push_decision()
 
-                if push_job:
+                # used to avoid locking if there is no job in the queue
+                if push_job and len(self.job_queue.items) > 0:
                     job = yield self.job_queue.get()
-                    self.job_released_event.succeed(job)
-                    self.job_released_event = self.env.event()
+                    yield self.job_to_be_released_queue.put(job)
 
             except Exception as e:
                 print(f"Error: {e}")
@@ -77,10 +82,10 @@ class PspJobReleasePolicy(JobReleasePolicy):
         self.env.process(self.__push_process())
 
 
-def __event_handler(release_policy: JobReleasePolicy):
+def __jobs_handler(job_to_be_released_queue: simpy.Store):
     while True:
         try:
-            job = yield release_policy.job_released_event
+            job = yield job_to_be_released_queue.get()
             print(job)
         except Exception as e:
             print(f"Error: {e}")
@@ -88,7 +93,9 @@ def __event_handler(release_policy: JobReleasePolicy):
 
 if __name__ == "__main__":
     env = simpy.Environment()
-    release_policy = PushJobReleasePolicy(env)
+
+    job_to_be_released_queue = simpy.Store(env)
+    release_policy = PushJobReleasePolicy(env, job_to_be_released_queue)
     release_policy.run()
-    env.process(__event_handler(release_policy))
+    env.process(__jobs_handler(job_to_be_released_queue))
     env.run(until=2)

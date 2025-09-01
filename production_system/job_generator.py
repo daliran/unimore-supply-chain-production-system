@@ -45,6 +45,8 @@ def get_random_family_index() -> int:
 
 
 def create_job_generator() -> Iterable[Job]:
+    current_id = 0
+
     while True:
         try:
             family_index = get_random_family_index()
@@ -64,6 +66,7 @@ def create_job_generator() -> Iterable[Job]:
             )
 
             item = Job(
+                id=current_id,
                 familyName=family_parameters.family_name,
                 inter_arrival_time=random.expovariate(
                     1 / simulation_parameters.job_arrival_rate_exponential_lambda
@@ -73,6 +76,8 @@ def create_job_generator() -> Iterable[Job]:
             )
 
             yield item
+
+            current_id = current_id + 1
 
         except Exception as e:
             print(f"Error: {e}")
